@@ -8,11 +8,10 @@ on:
     branches: [main]
     paths:
       - Dockerfile
-      - scripts/**
       - .github/workflows/build.yml
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -23,7 +22,8 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build (load locally, do not push yet)
+      # 第一遍：只为拿到“这个 Dockerfile 现在装出来的组件版本”
+      - name: Probe build (not pushed)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -34,19 +34,24 @@ jobs:
         id: comps
         run: |
           set -e
-          docker run --rm nginx-with-extras:candidate sh -c 'apk info -v' | sort > /tmp/all-packages.txt
-          grep -E '^(nginx|nginx-mod-http-(dav-ext|headers-more|xslt-filter)|fcgiwrap)-[0-9]' /tmp/all-packages.txt > /tmp/components.txt
+          docker run --rm nginx-with-extras:candidate sh -c 'apk info -v' \
+            | grep -E '^(nginx|nginx-mod-http-(dav-ext|headers-more|xslt-filter)|ca-certificates|tzdata)-[0-9]' \
+            | sort > /tmp/components.txt
           cat /tmp/components.txt
-          # 变更判定要同时覆盖「依赖版本」和「Dockerfile/build 脚本内容」，
-          # 否则只改 Dockerfile（比如加用户）不会触发推送。
           echo "digest=$( { cat /tmp/components.txt; sha256sum Dockerfile; } | sha256sum | cut -d' ' -f1 )" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
+          # OCI label 的值：name-version，逗号分隔
+          echo "components=$(paste -sd, /tmp/components.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Compare with last build
         id: diff
         run: |
           prev=""
-          [ -f versions/latest.sha ] && prev="$(cat versions/latest.sha)"
+          cid=$(docker create ghcr.io/${{ github.repository }}:latest 2>/dev/null || true)
+          if [ -n "$cid" ]; then
+            prev=$(docker inspect --format '{{index .Config.Labels "io.wannaknowhys.digest"}}' "$cid" 2>/dev/null || true)
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+          fi
           if [ "$prev" = "${{ steps.comps.outputs.digest }}" ]; then
             echo "组件无变化，跳过推送"
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -62,28 +67,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push image
+      # 第二遍：带上 label 真正推送。层缓存命中，只多几秒。
+      - name: Build and push (with component labels)
         if: steps.diff.outputs.changed == 'true'
-        run: |
-          IMG="ghcr.io/${{ github.repository }}"
-          docker tag nginx-with-extras:candidate "$IMG:latest"
-          docker tag nginx-with-extras:candidate "$IMG:${{ steps.comps.outputs.date }}"
-          docker push "$IMG:latest"
-          docker push "$IMG:${{ steps.comps.outputs.date }}"
-
-      - name: Write manifest
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          python3 scripts/manifest.py /tmp/all-packages.txt "${{ steps.comps.outputs.date }}" versions
-          sha256sum /tmp/components.txt | cut -d' ' -f1 > versions/latest.sha
-
-      - name: Commit manifest
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add versions
-          git commit -m "build: ${{ steps.comps.outputs.date }}" || echo "nothing to commit"
-          git push
-
-
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          labels: |
+            org.opencontainers.image.title=nginx-with-extras
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.comps.outputs.date }}
+            io.wannaknowhys.build-date=${{ steps.comps.outputs.date }}
+            io.wannaknowhys.digest=${{ steps.comps.outputs.digest }}
+            io.wannaknowhys.components=${{ steps.comps.outputs.components }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.comps.outputs.date }}
