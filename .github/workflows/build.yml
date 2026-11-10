@@ -34,11 +34,8 @@ jobs:
         id: comps
         run: |
           set -e
-          docker run --rm nginx-with-extras:candidate sh -c '
-            for p in nginx nginx-mod-http-dav-ext nginx-mod-http-headers-more nginx-mod-http-xslt-filter fcgiwrap; do
-              apk info -v "$p"
-            done
-          ' | sort > /tmp/components.txt
+          docker run --rm nginx-with-extras:candidate sh -c 'apk info -v' | sort > /tmp/all-packages.txt
+          grep -E '^(nginx|nginx-mod-http-(dav-ext|headers-more|xslt-filter)|fcgiwrap)-[0-9]' /tmp/all-packages.txt > /tmp/components.txt
           cat /tmp/components.txt
           echo "digest=$(sha256sum /tmp/components.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
@@ -75,7 +72,7 @@ jobs:
       - name: Write manifest
         if: steps.diff.outputs.changed == 'true'
         run: |
-          python3 scripts/manifest.py /tmp/components.txt "${{ steps.comps.outputs.date }}" versions
+          python3 scripts/manifest.py /tmp/all-packages.txt "${{ steps.comps.outputs.date }}" versions
           sha256sum /tmp/components.txt | cut -d' ' -f1 > versions/latest.sha
 
       - name: Commit manifest
@@ -86,3 +83,4 @@ jobs:
           git add versions
           git commit -m "build: ${{ steps.comps.outputs.date }}" || echo "nothing to commit"
           git push
+
