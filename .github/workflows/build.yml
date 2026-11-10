@@ -37,7 +37,9 @@ jobs:
           docker run --rm nginx-with-extras:candidate sh -c 'apk info -v' | sort > /tmp/all-packages.txt
           grep -E '^(nginx|nginx-mod-http-(dav-ext|headers-more|xslt-filter)|fcgiwrap)-[0-9]' /tmp/all-packages.txt > /tmp/components.txt
           cat /tmp/components.txt
-          echo "digest=$(sha256sum /tmp/components.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          # 变更判定要同时覆盖「依赖版本」和「Dockerfile/build 脚本内容」，
+          # 否则只改 Dockerfile（比如加用户）不会触发推送。
+          echo "digest=$( { cat /tmp/components.txt; sha256sum Dockerfile; } | sha256sum | cut -d' ' -f1 )" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
 
       - name: Compare with last build
@@ -83,4 +85,5 @@ jobs:
           git add versions
           git commit -m "build: ${{ steps.comps.outputs.date }}" || echo "nothing to commit"
           git push
+
 
