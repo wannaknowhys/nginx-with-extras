@@ -10,20 +10,9 @@ RUN apk add --no-cache \
       ca-certificates \
       tzdata
 
-# 与宿主 Debian 对齐：www-data = uid 33 / gid 33（/var/Keys/users 是 640 root:www-data）。
-# Alpine 自带 www-data:82，直接 addgroup 会失败并沿用 82，所以先改写 gid。
-RUN set -eux; \
-    if getent group www-data >/dev/null; then \
-        sed -i 's|^www-data:x:[0-9]*:|www-data:x:33:|' /etc/group; \
-    else \
-        addgroup -g 33 -S www-data; \
-    fi; \
-    if getent passwd www-data >/dev/null; then \
-        sed -i 's|^www-data:x:[0-9]*:[0-9]*:|www-data:x:33:33:|' /etc/passwd; \
-    else \
-        adduser -S -D -H -u 33 -G www-data www-data; \
-    fi; \
-    getent passwd www-data; getent group www-data
+# 不再创建 www-data：镜像用 Alpine 自带的 nginx 用户，
+# 认证文件/证书/数据目录都是 644 或 777，任何 uid 都读得到、写得进。
+RUN getent passwd nginx; getent group nginx
 
 EXPOSE 80 443
 STOPSIGNAL SIGQUIT
