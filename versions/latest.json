@@ -1,0 +1,13 @@
+{
+  "our_version": "2026.11.10",
+  "built_at": "2026-11-10T17:15:59Z",
+  "image": "ghcr.io/wannaknowhys/nginx-with-extras",
+  "base": "docker.io/library/alpine:latest",
+  "packages": {
+    "nginx": "mod-http-dav-ext: 27 KiB",
+    "nginx-mod-http-dav-ext": "unknown",
+    "nginx-mod-http-headers-more": "unknown",
+    "nginx-mod-http-xslt-filter": "unknown",
+    "fcgiwrap": "unknown"
+  }
+}
