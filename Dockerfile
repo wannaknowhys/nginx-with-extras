@@ -13,12 +13,22 @@ RUN apk add --no-cache \
       tzdata \
       gettext
 
-# 与宿主机 Debian 对齐：uid/gid 33 的 www-data，
-# 这样 nginx 配置里 `user www-data;` 在容器内外行为一致，
-# WebDAV/临时文件的属主也不会因为容器重建而变化。
-RUN addgroup -g 33 -S www-data 2>/dev/null || true \
- && adduser  -S -D -H -u 33 -G www-data www-data 2>/dev/null || true \
- && getent passwd www-data
+# 与宿主 Debian 完全对齐：www-data = uid 33 / gid 33。
+# Alpine 自带一个 www-data:82 的组，直接 addgroup 会失败并沿用 82，
+# 导致读不了宿主上 root:www-data 640 的文件（/var/Keys/users），
+# 所以这里先改写 gid 再用它建用户。
+RUN set -eux; \
+    if getent group www-data >/dev/null; then \
+        sed -i 's|^www-data:x:[0-9]*:|www-data:x:33:|' /etc/group; \
+    else \
+        addgroup -g 33 -S www-data; \
+    fi; \
+    if getent passwd www-data >/dev/null; then \
+        sed -i 's|^www-data:x:[0-9]*:[0-9]*:|www-data:x:33:33:|' /etc/passwd; \
+    else \
+        adduser -S -D -H -u 33 -G www-data www-data; \
+    fi; \
+    getent passwd www-data; getent group www-data
 
 RUN mkdir -p /srv/data /srv/run
 
