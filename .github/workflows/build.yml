@@ -1,0 +1,88 @@
+name: build
+
+on:
+  schedule:
+    - cron: "17 5 * * *"      # 每天 05:17 UTC 探一次
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - scripts/**
+      - .github/workflows/build.yml
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (load locally, do not push yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: nginx-with-extras:candidate
+
+      - name: Collect component versions
+        id: comps
+        run: |
+          set -e
+          docker run --rm nginx-with-extras:candidate sh -c '
+            for p in nginx nginx-mod-http-dav-ext nginx-mod-http-headers-more nginx-mod-http-xslt-filter fcgiwrap; do
+              apk info -v "$p"
+            done
+          ' | sort > /tmp/components.txt
+          cat /tmp/components.txt
+          echo "digest=$(sha256sum /tmp/components.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Compare with last build
+        id: diff
+        run: |
+          prev=""
+          [ -f versions/latest.sha ] && prev="$(cat versions/latest.sha)"
+          if [ "$prev" = "${{ steps.comps.outputs.digest }}" ]; then
+            echo "组件无变化，跳过推送"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to GHCR
+        if: steps.diff.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          IMG="ghcr.io/${{ github.repository }}"
+          docker tag nginx-with-extras:candidate "$IMG:latest"
+          docker tag nginx-with-extras:candidate "$IMG:${{ steps.comps.outputs.date }}"
+          docker push "$IMG:latest"
+          docker push "$IMG:${{ steps.comps.outputs.date }}"
+
+      - name: Write manifest
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          python3 scripts/manifest.py /tmp/components.txt "${{ steps.comps.outputs.date }}" versions
+          sha256sum /tmp/components.txt | cut -d' ' -f1 > versions/latest.sha
+
+      - name: Commit manifest
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add versions
+          git commit -m "build: ${{ steps.comps.outputs.date }}" || echo "nothing to commit"
+          git push

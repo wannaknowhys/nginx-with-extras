@@ -1,0 +1,3 @@
+.git
+versions/*.json
+!versions/latest.json
