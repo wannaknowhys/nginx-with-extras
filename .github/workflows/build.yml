@@ -22,7 +22,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # 第一遍：只为拿到“这个 Dockerfile 现在装出来的组件版本”
+      # 第一遍：构建候选镜像以提取版本与摘要
       - name: Probe build (not pushed)
         uses: docker/build-push-action@v6
         with:
@@ -34,14 +34,15 @@ jobs:
         id: comps
         run: |
           set -e
-          docker run --rm nginx-with-extras:candidate sh -c 'apk info -v' \
-            | grep -E '^(nginx|nginx-mod-http-(dav-ext|headers-more|xslt-filter)|ca-certificates|tzdata)-[0-9]' \
-            | sort > /tmp/components.txt
+          # 从纯静态二进制读取 nginx 版本（输出至 stderr，形如 "nginx version: nginx/1.27.x"）
+          ver=$(docker run --rm nginx-with-extras:candidate /usr/sbin/nginx -v 2>&1 | awk -F'/' '{print $2}' | tr -d ' \r\n')
+          echo "nginx_version=${ver}"
+          echo "nginx=${ver}" > /tmp/components.txt
+          sha256sum Dockerfile >> /tmp/components.txt
           cat /tmp/components.txt
-          echo "digest=$( { cat /tmp/components.txt; sha256sum Dockerfile; } | sha256sum | cut -d' ' -f1 )" >> "$GITHUB_OUTPUT"
+          echo "digest=$(sha256sum /tmp/components.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
-          # OCI label 的值：name-version，逗号分隔
-          echo "components=$(paste -sd, /tmp/components.txt)" >> "$GITHUB_OUTPUT"
+          echo "components=nginx-${ver}" >> "$GITHUB_OUTPUT"
 
       - name: Compare with last build
         id: diff
@@ -52,11 +53,13 @@ jobs:
             prev=$(docker inspect --format '{{index .Config.Labels "io.wannaknowhys.digest"}}' "$cid" 2>/dev/null || true)
             docker rm -f "$cid" >/dev/null 2>&1 || true
           fi
-          if [ "$prev" = "${{ steps.comps.outputs.digest }}" ]; then
-            echo "组件无变化，跳过推送"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
+          # 如果 digest 改变，或由 push / manual 触发，则执行推送
+          if [ "$prev" != "${{ steps.comps.outputs.digest }}" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Build targets updated or manual/push triggered, proceeding with push"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Components unchanged, skipping push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Login to GHCR
@@ -67,7 +70,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 第二遍：带上 label 真正推送。层缓存命中，只多几秒。
+      # 第二遍：打上 OCI 标签推送到 GHCR
       - name: Build and push (with component labels)
         if: steps.diff.outputs.changed == 'true'
         uses: docker/build-push-action@v6

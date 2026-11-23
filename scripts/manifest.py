@@ -14,7 +14,6 @@ PACKAGES = [
     "nginx-mod-http-dav-ext",
     "nginx-mod-http-headers-more",
     "nginx-mod-http-xslt-filter",
-    "fcgiwrap",
 ]
 
 

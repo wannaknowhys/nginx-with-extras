@@ -24,8 +24,7 @@ Alpine 版 nginx，带 `dav-ext` / `headers-more` / `xslt-filter` 三个模块�
     "nginx": "1.27.4-r0",
     "nginx-mod-http-dav-ext": "1.27.4-r0",
     "nginx-mod-http-headers-more": "1.27.4-r0",
-    "nginx-mod-http-xslt-filter": "1.27.4-r0",
-    "fcgiwrap": "1.1.0-r4"
+    "nginx-mod-http-xslt-filter": "1.27.4-r0"
   }
 }
 ```
